@@ -11,7 +11,7 @@ type Variables = {
 };
 
 type Bindings = {
-  DATABASE_URL: string; // Database connection string
+  DATABASE_URL: string; // Database connection
 };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
