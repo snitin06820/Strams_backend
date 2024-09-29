@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { pgTable, text, varchar } from "drizzle-orm/pg-core";
-import { Pool } from "pg";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
+import { Client } from "@neondatabase/serverless";
 
 type Variables = {
   db: NodePgDatabase;
@@ -17,11 +17,12 @@ type Bindings = {
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 app.use("*", async (c, next) => {
-  const pool = new Pool({
-    connectionString: c.env.DATABASE_URL, // Use the DATABASE_URL environment variable
-  });
-
-  const db = drizzle(pool);
+  const client = new Client(c.env.DATABASE_URL);
+  await client.connect();
+  // const pool = new Pool({
+  //   connectionString: c.env.DATABASE_URL, // Use the DATABASE_URL environment variable
+  // });
+  const db = drizzle(client);
   c.set("db", db);
   await next();
 });
