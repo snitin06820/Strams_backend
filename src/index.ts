@@ -4,25 +4,23 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { pgTable, text, varchar } from "drizzle-orm/pg-core";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
-import { Client } from "@neondatabase/serverless";
+import { Pool } from "pg";
 
 type Variables = {
   db: NodePgDatabase;
 };
 
-type Bindings = {
-  DATABASE_URL: string; // Database connection
+export type Env = {
+  DATABASE_URL: string;
 };
 
-const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.use("*", async (c, next) => {
-  const client = new Client(c.env.DATABASE_URL);
-  await client.connect();
-  // const pool = new Pool({
-  //   connectionString: c.env.DATABASE_URL, // Use the DATABASE_URL environment variable
-  // });
-  const db = drizzle(client);
+  const pool = new Pool({
+    connectionString: c.env.DATABASE_URL, // Use the DATABASE_URL environment variable
+  });
+  const db = drizzle(pool);
   c.set("db", db);
   await next();
 });
