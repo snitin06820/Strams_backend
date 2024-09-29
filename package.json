@@ -1,0 +1,28 @@
+{
+  "name": "my-hono-app",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.9.5",
+    "@prisma/client": "^5.20.0",
+    "@prisma/extension-accelerate": "^1.2.0",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.33.0",
+    "fs": "^0.0.1-security",
+    "hono": "^4.6.3",
+    "pg": "^8.13.0",
+    "postgres": "^3.4.4",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240925.0",
+    "@types/uuid": "^10.0.0",
+    "drizzle-kit": "^0.24.2",
+    "prisma": "^5.20.0",
+    "wrangler": "^3.57.2"
+  }
+}

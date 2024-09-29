@@ -1,0 +1,6 @@
+name = "edw4rd-streams"
+type = "javascript"
+compatibility_date = "2024-09-27"
+compatibility_flags = ["nodejs_compat_v2"]
+
+main = "./src/index.ts"
