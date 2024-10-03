@@ -5,8 +5,7 @@ import { pgTable, text, varchar } from "drizzle-orm/pg-core";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { Pool } from "pg";
-import { jwt } from "hono/jwt";
-import jwtLib from "jsonwebtoken";
+import { sign, verify } from "hono/jwt";
 import bcrypt from "bcryptjs";
 
 type Variables = {
@@ -27,14 +26,6 @@ app.use("*", async (c, next) => {
   const db = drizzle(pool);
   c.set("db", db);
   await next();
-});
-
-// Apply jwt middleware only to /auth/* routes
-app.use("/auth/*", (c, next) => {
-  const jwtMiddleware = jwt({
-    secret: c.env.JWT_SECRET,
-  });
-  return jwtMiddleware(c, next);
 });
 
 const movies = pgTable("Movie", {
@@ -98,7 +89,13 @@ app.post("/signin", async (c) => {
     }
   }
 
-  const token = jwtLib.sign({ userId: user[0].id }, c.env.JWT_SECRET);
+  const payload = {
+    sub: user[0].id,
+    role: "user",
+    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
+  };
+
+  const token = sign(payload, c.env.JWT_SECRET);
   console.log("User signed in successfully:", parsedBody.email);
 
   return c.json({ token });
@@ -132,17 +129,60 @@ app.post("/signup", async (c) => {
     })
     .returning();
 
-  const token = jwtLib.sign({ userId: newUser[0].id }, c.env.JWT_SECRET);
+  const payload = {
+    sub: newUser[0].id,
+    role: "user",
+    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
+  };
+
+  const token = sign(payload, c.env.JWT_SECRET);
   console.log("New user signed up:", parsedBody.email);
   return c.json({ token });
 });
 
 // The rest of your movie routes remain unchanged
 app.get("/movies", async (c) => {
-  const db = c.var.db;
-  const allMovies = await db.select().from(movies);
-  console.log("Fetched all movies");
-  return c.json({ moviesData: allMovies });
+  try {
+    const header = c.req.header("authorization");
+    if (header) {
+      const filter = header.split(" ");
+
+      if (filter.length < 2) {
+        throw new Error("Invalid authorization header format.");
+      }
+
+      const token = filter[1];
+
+      try {
+        const decodedPayload = await verify(token, c.env.JWT_SECRET);
+
+        if (!decodedPayload || !decodedPayload.userId) {
+          throw new Error("Invalid token payload.");
+        }
+
+        try {
+          const db = c.var.db;
+          const user = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, decodedPayload.userId.toString()));
+
+          if (user) {
+            const allMovies = await db.select().from(movies);
+            return c.json({
+              moviesData: allMovies,
+            });
+          }
+        } catch (error) {
+          throw new Error("user does not exist");
+        }
+      } catch (error) {
+        throw new Error("Error verifying token or fetching user");
+      }
+    }
+  } catch (error) {
+    throw new Error("missing Auth header");
+  }
 });
 
 app.post("/movies", async (c) => {
