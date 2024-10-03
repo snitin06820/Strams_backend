@@ -1,5 +1,4 @@
 name = "edw4rd-stream"
-type = "javascript"
 compatibility_date = "2024-09-27"
 compatibility_flags = ["nodejs_compat_v2"]
 
@@ -7,3 +6,4 @@ main = "./src/index.ts"
 
 [vars]
 DATABASE_URL="postgresql://edwardstreamsdb_owner:ACcxvIjsUm40@ep-purple-river-a11huy3u.ap-southeast-1.aws.neon.tech/edwardstreamsdb?sslmode=require"
+JWT_SECRET = "test123"

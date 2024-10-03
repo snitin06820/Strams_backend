@@ -5,12 +5,16 @@ import { pgTable, text, varchar } from "drizzle-orm/pg-core";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { Pool } from "pg";
+import { jwt } from "hono/jwt";
+import jwtLib from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 
 type Variables = {
   db: NodePgDatabase;
 };
 
 export type Env = {
+  JWT_SECRET: string;
   DATABASE_URL: string;
 };
 
@@ -18,11 +22,19 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.use("*", async (c, next) => {
   const pool = new Pool({
-    connectionString: c.env.DATABASE_URL, // Use the DATABASE_URL environment variable
+    connectionString: c.env.DATABASE_URL,
   });
   const db = drizzle(pool);
   c.set("db", db);
   await next();
+});
+
+// Apply jwt middleware only to /auth/* routes
+app.use("/auth/*", (c, next) => {
+  const jwtMiddleware = jwt({
+    secret: c.env.JWT_SECRET,
+  });
+  return jwtMiddleware(c, next);
 });
 
 const movies = pgTable("Movie", {
@@ -32,22 +44,109 @@ const movies = pgTable("Movie", {
   watchLink: text("watchLink"),
 });
 
+const users = pgTable("User", {
+  id: varchar("id").primaryKey(),
+  email: varchar("email", { length: 255 }),
+  password: varchar("password", { length: 255 }),
+  name: varchar("name", { length: 255 }),
+});
+
+const userSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
+const signupSchema = z.object({
+  name: z.string(),
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
 const movieSchema = z.object({
   title: z.string(),
   posterLink: z.string(),
   watchNowLink: z.string(),
 });
 
-// GET: Retrieve all movies
+// Sign-in route is still protected by JWT
+app.post("/signin", async (c) => {
+  const body = await c.req.json();
+  const parsedBody = userSchema.parse(body);
+
+  const db = c.var.db;
+  const user = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, parsedBody.email));
+
+  if (!user || !user.length) {
+    console.log("Signin attempt: Invalid user");
+    return c.json({ mssg: "Invalid user", status: 401 });
+  }
+
+  if (parsedBody.password && user[0].password) {
+    const isValidPassword = await bcrypt.compare(
+      parsedBody.password,
+      user[0].password
+    );
+    if (!isValidPassword) {
+      console.log(
+        "Signin attempt: Invalid password for user",
+        parsedBody.email
+      );
+      return c.json({ mssg: "Invalid password" });
+    }
+  }
+
+  const token = jwtLib.sign({ userId: user[0].id }, c.env.JWT_SECRET);
+  console.log("User signed in successfully:", parsedBody.email);
+
+  return c.json({ token });
+});
+
+// Sign-up route is now accessible without JWT
+app.post("/signup", async (c) => {
+  const body = await c.req.json();
+  console.log("request body received:", body);
+  const parsedBody = signupSchema.parse(body);
+
+  const db = c.var.db;
+  const existingUser = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, parsedBody.email));
+
+  if (existingUser && existingUser.length) {
+    console.log("Signup attempt: Email already in use", parsedBody.email);
+    return c.text("Email already in use", 400);
+  }
+
+  const hashedPassword = await bcrypt.hash(parsedBody.password, 10);
+  const newUser = await db
+    .insert(users)
+    .values({
+      id: uuidv4(),
+      email: parsedBody.email,
+      password: hashedPassword,
+      name: parsedBody.name,
+    })
+    .returning();
+
+  const token = jwtLib.sign({ userId: newUser[0].id }, c.env.JWT_SECRET);
+  console.log("New user signed up:", parsedBody.email);
+  return c.json({ token });
+});
+
+// The rest of your movie routes remain unchanged
 app.get("/movies", async (c) => {
-  const db = c.var.db; // Retrieve the database client
+  const db = c.var.db;
   const allMovies = await db.select().from(movies);
+  console.log("Fetched all movies");
   return c.json({ moviesData: allMovies });
 });
 
-// POST: Add a new movie
 app.post("/movies", async (c) => {
-  const db = c.var.db; // Retrieve the database client
+  const db = c.var.db;
   const body = await c.req.json();
   const parsedBody = movieSchema.parse(body);
 
@@ -61,12 +160,12 @@ app.post("/movies", async (c) => {
     })
     .returning();
 
+  console.log("New movie added:", parsedBody.title);
   return c.json(newMovie, 201);
 });
 
-// PUT: Update a movie by ID
 app.put("/movies/:id", async (c) => {
-  const db = c.var.db; // Retrieve the database client
+  const db = c.var.db;
   const id = c.req.param("id");
   const body = await c.req.json();
   const parsedBody = movieSchema.parse(body);
@@ -81,15 +180,16 @@ app.put("/movies/:id", async (c) => {
     .where(eq(movies.movieID, String(id)))
     .returning();
 
+  console.log("Movie updated:", parsedBody.title);
   return c.json(updatedMovie);
 });
 
-// DELETE: Remove a movie by ID
 app.delete("/movies/:id", async (c) => {
-  const db = c.var.db; // Retrieve the database client
+  const db = c.var.db;
   const id = c.req.param("id");
 
   await db.delete(movies).where(eq(movies.movieID, String(id)));
+  console.log("Movie deleted with ID:", id);
 
   return c.text("Movie deleted successfully", 204);
 });
