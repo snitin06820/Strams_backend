@@ -123,6 +123,16 @@ const protectedRoute = async (c: Context, next: Next) => {
   await next();
 };
 
+app.get("/user", protectedRoute, async (c) => {
+  const db = c.var.db;
+  const totalusers = await db.select().from(users);
+  if (totalusers == null) {
+    return c.text("No users in database", 404);
+  } else {
+    return c.json(totalusers);
+  }
+});
+
 app.get("/movies", protectedRoute, async (c) => {
   const db = c.var.db;
   const allMovies = await db.select().from(movies);
