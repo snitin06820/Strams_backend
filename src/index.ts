@@ -1,13 +1,12 @@
-import { Hono } from "hono";
+import { Hono, Context, Next } from "hono";
 import { z } from "zod";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { pgTable, text, varchar } from "drizzle-orm/pg-core";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { Pool } from "pg";
-import { sign, verify } from "hono/jwt";
-import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 type Variables = {
   db: NodePgDatabase;
@@ -21,9 +20,7 @@ export type Env = {
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.use("*", async (c, next) => {
-  const pool = new Pool({
-    connectionString: c.env.DATABASE_URL,
-  });
+  const pool = new Pool({ connectionString: c.env.DATABASE_URL });
   const db = drizzle(pool);
   c.set("db", db);
   await next();
@@ -57,149 +54,82 @@ const signupSchema = z.object({
 const movieSchema = z.object({
   title: z.string(),
   posterLink: z.string(),
-  watchNowLink: z.string(),
+  watchLink: z.string(),
 });
 
-// Sign-in route is still protected by JWT
+const authenticate = async (c: Context) => {
+  const header = c.req.header("authorization");
+  if (!header) return null;
+
+  const [bearer, token] = header.split(" ");
+  if (bearer !== "Bearer" || !token) return null;
+
+  try {
+    return await jwt.verify(token, c.env.JWT_SECRET);
+  } catch {
+    return null;
+  }
+};
+
 app.post("/signin", async (c) => {
   const body = await c.req.json();
-  const parsedBody = userSchema.parse(body);
+  const { email, password } = userSchema.parse(body);
 
   const db = c.var.db;
-  const user = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, parsedBody.email));
+  const user = await db.select().from(users).where(eq(users.email, email));
 
-  if (!user || !user.length) {
-    console.log("Signin attempt: Invalid user");
-    return c.json({ mssg: "Invalid user", status: 401 });
+  if (
+    !user ||
+    user.length === 0 ||
+    !(await bcrypt.compare(password, user[0]?.password))
+  ) {
+    return c.json({ message: "Invalid credentials", status: 401 });
   }
 
-  if (parsedBody.password && user[0].password) {
-    const isValidPassword = await bcrypt.compare(
-      parsedBody.password,
-      user[0].password
-    );
-    if (!isValidPassword) {
-      console.log(
-        "Signin attempt: Invalid password for user",
-        parsedBody.email
-      );
-      return c.json({ mssg: "Invalid password" });
-    }
-  }
-
-  const payload = {
-    sub: user[0].id,
-    role: "user",
-    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
-  };
-
-  const token = jwt.sign(payload, c.env.JWT_SECRET);
-  console.log("User signed in successfully:", parsedBody.email);
-
+  const token = jwt.sign({ id: user[0].id }, c.env.JWT_SECRET);
   return c.json({ token });
 });
 
-// Sign-up route is now accessible without JWT
 app.post("/signup", async (c) => {
   const body = await c.req.json();
-  console.log("request body received:", body);
-  const parsedBody = signupSchema.parse(body);
+  const { name, email, password } = signupSchema.parse(body);
 
   const db = c.var.db;
   const existingUser = await db
     .select()
     .from(users)
-    .where(eq(users.email, parsedBody.email));
+    .where(eq(users.email, email));
 
   if (existingUser && existingUser.length) {
-    console.log("Signup attempt: Email already in use", parsedBody.email);
     return c.text("Email already in use", 400);
   }
 
-  const hashedPassword = await bcrypt.hash(parsedBody.password, 10);
+  const hashedPassword = await bcrypt.hash(password, 10);
   const newUser = await db
     .insert(users)
-    .values({
-      id: uuidv4(),
-      email: parsedBody.email,
-      password: hashedPassword,
-      name: parsedBody.name,
-    })
+    .values({ id: uuidv4(), email, password: hashedPassword, name })
     .returning();
 
-  const payload = {
-    sub: newUser[0].id,
-    role: "user",
-    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
-  };
-
-  const token = jwt.sign(payload, c.env.JWT_SECRET);
-  console.log("New user signed up:", parsedBody.email);
+  const token = jwt.sign({ id: newUser[0].id }, c.env.JWT_SECRET);
   return c.json({ token });
 });
 
-//for check how many users in my database
-app.get("/user" , async (c) => {
-  const db = c.var.db; // Retrieve the database client
-  const totalusers = await db.select().from(users);
-
-  if(totalusers == null){
-    return c.text("No users in database", 404);
-  }else{
-    return c.json(totalusers);
+const protectedRoute = async (c: Context, next: Next) => {
+  const decoded = await authenticate(c);
+  if (!decoded) {
+    return c.json({ message: "Unauthorized" }, 401);
   }
+  c.set("userId", decoded.id);
+  await next();
+};
 
-})
-
-// The rest of your movie routes remain unchanged
-app.get("/movies", async (c) => {
-  try {
-    const header = c.req.header("authorization");
-    if (header) {
-      const filter = header.split(" ");
-
-      if (filter.length < 2) {
-        throw new Error("Invalid authorization header format.");
-      }
-
-      const token = filter[1];
-
-      try {
-        const decodedPayload = await verify(token, c.env.JWT_SECRET);
-
-        if (!decodedPayload || !decodedPayload.userId) {
-          throw new Error("Invalid token payload.");
-        }
-
-        try {
-          const db = c.var.db;
-          const user = await db
-            .select()
-            .from(users)
-            .where(eq(users.id, decodedPayload.userId.toString()));
-
-          if (user) {
-            const allMovies = await db.select().from(movies);
-            return c.json({
-              moviesData: allMovies,
-            });
-          }
-        } catch (error) {
-          throw new Error("user does not exist");
-        }
-      } catch (error) {
-        throw new Error("Error verifying token or fetching user");
-      }
-    }
-  } catch (error) {
-    throw new Error("missing Auth header");
-  }
+app.get("/movies", protectedRoute, async (c) => {
+  const db = c.var.db;
+  const allMovies = await db.select().from(movies);
+  return c.json({ moviesData: allMovies });
 });
 
-app.post("/movies", async (c) => {
+app.post("/movies", protectedRoute, async (c) => {
   const db = c.var.db;
   const body = await c.req.json();
   const parsedBody = movieSchema.parse(body);
@@ -210,15 +140,14 @@ app.post("/movies", async (c) => {
       movieID: uuidv4(),
       title: parsedBody.title,
       posterLink: parsedBody.posterLink,
-      watchLink: parsedBody.watchNowLink,
+      watchLink: parsedBody.watchLink,
     })
     .returning();
 
-  console.log("New movie added:", parsedBody.title);
   return c.json(newMovie, 201);
 });
 
-app.put("/movies/:id", async (c) => {
+app.put("/movies/:id", protectedRoute, async (c) => {
   const db = c.var.db;
   const id = c.req.param("id");
   const body = await c.req.json();
@@ -229,22 +158,19 @@ app.put("/movies/:id", async (c) => {
     .set({
       title: parsedBody.title,
       posterLink: parsedBody.posterLink,
-      watchLink: parsedBody.watchNowLink,
+      watchLink: parsedBody.watchLink,
     })
-    .where(eq(movies.movieID, String(id)))
+    .where(eq(movies.movieID, id))
     .returning();
 
-  console.log("Movie updated:", parsedBody.title);
   return c.json(updatedMovie);
 });
 
-app.delete("/movies/:id", async (c) => {
+app.delete("/movies/:id", protectedRoute, async (c) => {
   const db = c.var.db;
   const id = c.req.param("id");
 
-  await db.delete(movies).where(eq(movies.movieID, String(id)));
-  console.log("Movie deleted with ID:", id);
-
+  await db.delete(movies).where(eq(movies.movieID, id));
   return c.text("Movie deleted successfully", 204);
 });
 
