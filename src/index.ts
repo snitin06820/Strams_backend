@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { Pool } from "pg";
 import { sign, verify } from "hono/jwt";
+import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 
 type Variables = {
@@ -95,7 +96,7 @@ app.post("/signin", async (c) => {
     exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
   };
 
-  const token = sign(payload, c.env.JWT_SECRET);
+  const token = jwt.sign(payload, c.env.JWT_SECRET);
   console.log("User signed in successfully:", parsedBody.email);
 
   return c.json({ token });
@@ -135,10 +136,23 @@ app.post("/signup", async (c) => {
     exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
   };
 
-  const token = sign(payload, c.env.JWT_SECRET);
+  const token = jwt.sign(payload, c.env.JWT_SECRET);
   console.log("New user signed up:", parsedBody.email);
   return c.json({ token });
 });
+
+//for check how many users in my database
+app.get("/user" , async (c) => {
+  const db = c.var.db; // Retrieve the database client
+  const totalusers = await db.select().from(users);
+
+  if(totalusers == null){
+    return c.text("No users in database", 404);
+  }else{
+    return c.json(totalusers);
+  }
+
+})
 
 // The rest of your movie routes remain unchanged
 app.get("/movies", async (c) => {
