@@ -7,6 +7,8 @@ import { v4 as uuidv4 } from "uuid";
 import { Pool } from "pg";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { cors } from "hono/cors";
+
 
 type Variables = {
   db: NodePgDatabase;
@@ -18,6 +20,21 @@ export type Env = {
 };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+
+// Allow CORS for all routes
+app.use('*', cors({
+  origin: 'https://edw4rd-streams.vercel.app/', // You can specify your frontend domain here
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+}));
+
+app.options('*', (c) => {
+  c.res.headers.append('Access-Control-Allow-Origin', 'https://edw4rd-streams.vercel.app/');
+  c.res.headers.append('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  c.res.headers.append('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  return c.text('OK', 200);
+});
+
 
 app.use("*", async (c, next) => {
   const pool = new Pool({ connectionString: c.env.DATABASE_URL });
@@ -78,11 +95,7 @@ app.post("/signin", async (c) => {
   const db = c.var.db;
   const user = await db.select().from(users).where(eq(users.email, email));
 
-  if (
-    !user ||
-    user.length === 0 ||
-    !(await bcrypt.compare(password, user[0]?.password))
-  ) {
+  if (!user || user.length === 0 || !(await bcrypt.compare(password, user[0]?.password))) {
     return c.json({ message: "Invalid credentials", status: 401 });
   }
 
